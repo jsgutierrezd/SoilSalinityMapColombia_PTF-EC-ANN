@@ -1,4 +1,5 @@
 setwd("~/PTF_EC")
+<<<<<<< HEAD
 library(readxl)
 library(magrittr)
 library(corrplot)
@@ -245,8 +246,6 @@ model_rf$bestTune
 
 saveRDS(model_rf, "Model_elco_23042020.rds")
 ##super_model <- readRDS("finalmodel.rds")
-
-
 
 library(randomForest)
 rf <- randomForest(x = dat1[,predictors(model_rf)], y =dat1[,6],ntree=500,mtry=2)
