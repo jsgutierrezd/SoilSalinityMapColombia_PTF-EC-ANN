@@ -1,4 +1,5 @@
 setwd("~/PTF_EC")
+<<<<<<< HEAD
 library(readxl)
 library(magrittr)
 library(corrplot)
@@ -257,3 +258,5 @@ pred <- predict(rf, data.validation)
 (cor(pred,data.validation$elco))^2
 
 
+=======
+>>>>>>> 703e430b9fd81f182eee91544592ff7cb0c2ad74
