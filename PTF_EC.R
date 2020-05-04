@@ -254,3 +254,6 @@ head(getTree(rf, k=50, labelVar = TRUE))
 varImpPlot(rf, main = "Clase por pedregosidad superficial")
 pred <- predict(rf, data.validation)
 (cor(pred,data.validation$elco))^2
+rmse(pred,data.validation$elco)
+saveRDS(rf, "Model_elco_04052020.rds")
+##super_model <- readRDS("finalmodel.rds")
