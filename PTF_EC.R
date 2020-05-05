@@ -1,5 +1,5 @@
 setwd("~/PTF_EC")
-<<<<<<< HEAD
+
 library(readxl)
 library(magrittr)
 library(corrplot)
@@ -17,7 +17,7 @@ dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_
                   sheet = "PTF_V0") %>% data.frame
 
 names(dat)
-dat <- dat[,-c(1,2,3,4,5,9,10,13,15,17,22,23,25,26)]
+dat <- dat[,-c(1:10,13,15:17,22:26)]
 names(dat)
 summary(dat)
 
@@ -29,32 +29,25 @@ cor(dat1)
 dat1 %>% as.matrix() %>% rcorr(type="pearson")
 dat1 %>% as.matrix() %>% rcorr(type="spearman")
 
-dat2 <- dat[,-4]
-dat2 <- dat2[complete.cases(dat2),]
-dim(dat2)
-summary(dat2)
-cor(dat2,method = "spearman")
-cor(dat2)
-dat2 %>% as.matrix() %>% rcorr(type="pearson")
-dat2 %>% as.matrix() %>% rcorr(type="spearman")
 x11()
-corrplot(cor(dat2), metod="circle")
+corrplot(cor(dat1), method="number")
+pairs(dat1)
 
-sc <- scale(dat2)
-dat2 <- data.frame(elco=dat2$elco,sc[,-5])
-head(dat2)
-dim(dat2)
+sc <- scale(dat1)
+dat1 <- data.frame(elco=dat1$elco,sc[,-3])
+head(dat1)
+dim(dat1)
 
 set.seed(0324)
-inTrain <- createDataPartition(y = dat2$elco, p = .80, list = FALSE)
-train_data <- as.matrix(dat2[ inTrain,-1])
-train_labels <- as.matrix(dat2[ inTrain,1])
+inTrain <- createDataPartition(y = dat1$elco, p = .80, list = FALSE)
+train_data <- as.matrix(dat1[ inTrain,-1])
+train_labels <- as.matrix(dat1[ inTrain,1])
 
 dim(train_data)
 #528  10
 
-test_data <- dat2[-inTrain,-1] %>% as.matrix()
-test_labels <- dat2[-inTrain,1] %>% as.matrix()
+test_data <- dat1[-inTrain,-1] %>% as.matrix()
+test_labels <- dat1[-inTrain,1] %>% as.matrix()
 dim(test_data)
 #132  10
 
@@ -71,7 +64,6 @@ build_model <- function() {
   model <- keras_model_sequential() %>%
     layer_dense(units = 16, activation = "relu",
                 input_shape = dim(train_data)[2]) %>%
-    layer_dense(units = 16, activation = "relu") %>%
     layer_dense(units = 16, activation = "relu") %>%
     layer_dense(units = 16, activation = "relu") %>%
     layer_dense(units = 1)
@@ -113,7 +105,7 @@ history <- model %>% fit(
 # #install.packages("digest",dep=T)
 # library(digest)
 plot(history, metrics = "mean_absolute_error", smooth = FALSE) +
-  coord_cartesian(ylim = c(0, 1))
+  coord_cartesian(ylim = c(0, 4))
 
 
 
@@ -133,7 +125,7 @@ history <- model %>% fit(
 
 
 plot(history, metrics = "mean_absolute_error", smooth = FALSE) +
-  coord_cartesian(xlim = c(0, 30), ylim = c(0, 1))
+  coord_cartesian(xlim = c(0, 30), ylim = c(0, 4))
 
 
 c(loss, mae) %<-% (model %>% evaluate(test_data, test_labels, verbose = 0))
@@ -176,7 +168,8 @@ dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_
                   sheet = "PTF_V0") %>% data.frame
 
 names(dat)
-dat <- dat[,-c(1,2,3,4,5,9,10,13,15,17,22,23,25,26)]
+#View(dat)
+dat <- dat[,-c(1:10,13,15:17,22:26)]
 names(dat)
 summary(dat)
 
@@ -187,18 +180,18 @@ names(dat1)
 str(dat1)
 
 dim(dat1)
-#790  10
+#1514  7
 
-set.seed(922)
-inTrain <- createDataPartition(y = dat1$elco, p = .80, list = FALSE)
+set.seed(720)
+inTrain <- createDataPartition(y = dat1$elco, p = .70, list = FALSE)
 data.training <- dat1[ inTrain,] 
 
 dim(data.training)
-#304  12
+#1060   7
 
 data.validation <- dat1[-inTrain,]
 dim(data.validation)
-#76 12
+#452   7
 
 library(raster)
 library(caret)
@@ -206,26 +199,30 @@ library(quantregForest)
 require(randomForest)
 library(doParallel)
 library(randomForest)
+library(quantregForest)
+library(quantreg)
+names(dat1)
 
 cl <- makeCluster(detectCores(), type='PSOCK')
 registerDoParallel(cl)
 control2 <- rfeControl(functions=rfFuncs, method="repeatedcv", number=5, repeats=5)
-(rfmodel <- rfe(x=dat1[,c(-6)], y=dat1[,6], sizes=c(1:6), rfeControl=control2))
+(rfmodel <- rfe(x=dat1[,-c(3,7)], y=dat1[,3], sizes=c(1:6), rfeControl=control2))
 x11()
 plot(rfmodel, type=c("g", "o"))
 predictors(rfmodel)[1:5]
 stopCluster(cl = cl)
 endCluster()
 names(dat1)
+hist(dat1)
+plot(dat1$Na,dat1$elco)
 
-ctrl <- trainControl(method = "cv",savePredictions = T)
-# Search for the best mtry parameter 
-model_rf <- caret::train(y=dat1[,6],
-                         x=dat1[,c(8,4,5,9,7)],
+
+model_rf <- caret::train(y=data.training[,3],
+                         x=data.training[,predictors(rfmodel)[1:5]],
                          metric="RMSE",
                          data=data,
-                         trControl = ctrl,
-                         method = "rf"
+                         trControl = trainControl(method = "cv",savePredictions = T),
+                         method = "qrf"
 )
 x11()
 varImpPlot(model_rf[11][[1]])
@@ -234,7 +231,7 @@ plot(model_rf[11][[1]])
 
 str(model_rf)
 
-pred <- predict(model_rf, data.validation)
+pred <- predict(model_rf, data.validation, quantiles=c(0.5,0.75),)
 (cor(pred,data.validation$elco))^2
 
 
@@ -244,16 +241,13 @@ sqrt(model_rf$finalModel$mse)
 str(model_rf)
 model_rf$bestTune
 
-saveRDS(model_rf, "Model_elco_23042020.rds")
-##super_model <- readRDS("finalmodel.rds")
 
-library(randomForest)
-rf <- randomForest(x = dat1[,predictors(model_rf)], y =dat1[,6],ntree=500,mtry=2)
-head(getTree(rf, k=50, labelVar = TRUE))
-#x11()
-varImpPlot(rf, main = "Clase por pedregosidad superficial")
-pred <- predict(rf, data.validation)
-(cor(pred,data.validation$elco))^2
-rmse(pred,data.validation$elco)
 saveRDS(rf, "Model_elco_04052020.rds")
 ##super_model <- readRDS("finalmodel.rds")
+
+
+
+qrf <- quantregForest(x=data.training[,predictors(rfmodel)[1:5]], y=data.training[,3],
+                      nodesize=10,sampsize=30)
+(conditionalQuantiles <- predict(qrf, data.validation))
+dim(data.validati
