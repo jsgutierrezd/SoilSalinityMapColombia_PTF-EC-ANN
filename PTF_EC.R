@@ -40,7 +40,7 @@ head(dat1)
 dim(dat1)
 
 set.seed(0324)
-inTrain <- createDataPartition(y = dat1$elco, p = .80, list = FALSE)
+inTrain <- createDataPartition(y = dat1$elco, p = .70, list = FALSE)
 train_data <- as.matrix(dat1[ inTrain,-1])
 train_labels <- as.matrix(dat1[ inTrain,1])
 
@@ -86,7 +86,7 @@ model %>% summary()
 print_dot_callback <- callback_lambda(
   on_epoch_end = function(epoch, logs) {
     if (epoch %% 80 == 0) cat("\n")
-    cat("_")
+    cat("-RuNnInG-")
   }
 )
 
@@ -146,6 +146,10 @@ hydroGOF::rmse(test_predictions[ , 1],test_labels[,1])
 hydroGOF::mse(test_predictions[ , 1],test_labels[,1])
 (cor(test_predictions[ , 1],test_labels[,1]))^2
 
+
+
+
+model %>% save_model_hdf5("PTF_v1NN.h5")
 
 
 
