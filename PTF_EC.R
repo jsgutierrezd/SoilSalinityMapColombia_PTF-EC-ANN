@@ -14,10 +14,11 @@ library(keras)
 
 
 dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_2020.xlsx",
-                  sheet = "PTF_V0") %>% data.frame
+                  sheet = "PTF_V1") %>% data.frame
 
 names(dat)
-dat <- dat[,-c(1:10,13,15:17,22:26)]
+dat <- dat[,c(11,12,14,15,18:21)]
+#dat <- dat[,-c(1:10,13,15:17,22:26)]
 names(dat)
 summary(dat)
 
@@ -65,12 +66,12 @@ build_model <- function() {
     layer_dense(units = 16, activation = "relu",
                 input_shape = dim(train_data)[2]) %>%
     layer_dense(units = 16, activation = "relu") %>%
-    layer_dense(units = 16, activation = "relu") %>%
+    #layer_dense(units = 16, activation = "relu") %>%
     layer_dense(units = 1)
   
   model %>% compile(
     loss = "mse",
-    optimizer = optimizer_adagrad(lr=0.01),
+    optimizer = optimizer_rmsprop(lr=0.01),
     metrics = list("mean_absolute_error")
   )
   
@@ -106,8 +107,6 @@ history <- model %>% fit(
 # library(digest)
 plot(history, metrics = "mean_absolute_error", smooth = FALSE) +
   coord_cartesian(ylim = c(0, 4))
-
-
 
 # The patience parameter is the amount of epochs to check for improvement.
 early_stop <- callback_early_stopping(monitor = "val_loss", patience = 20)
