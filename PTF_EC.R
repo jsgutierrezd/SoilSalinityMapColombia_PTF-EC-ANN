@@ -17,7 +17,7 @@ dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_
                   sheet = "PTF_V1") %>% data.frame
 
 names(dat)
-dat <- dat[,c(11,12,14,15,18:21)]
+dat <- dat[,c(12,14,15,18:21)]
 #dat <- dat[,-c(1:10,13,15:17,22:26)]
 names(dat)
 summary(dat)
@@ -39,6 +39,11 @@ dat1 <- data.frame(elco=dat1$elco,sc[,-3])
 head(dat1)
 dim(dat1)
 
+
+#==================================================
+#====DEEP LEARNING-NEURAL NETWORK-KERAS PACKAGE====
+#==================================================
+
 set.seed(0324)
 inTrain <- createDataPartition(y = dat1$elco, p = .70, list = FALSE)
 train_data <- as.matrix(dat1[ inTrain,-1])
@@ -54,10 +59,7 @@ dim(test_data)
 
 
 train_data[1, ] 
-#==================================================
-#====DEEP LEARNING-NEURAL NETWORK-KERAS PACKAGE====
-#==================================================
-# First training sample, normalized
+
 ######optimizer_rmsprop(lr=0.01)
 ######optimizer_adagrad(lr=0.01)
 build_model <- function() {
@@ -155,79 +157,35 @@ new_model <- load_model_hdf5("my_model.h5")
 new_model %>% summary()
 
 
+
 #==================================================
 #====MACHINE LEARNING - RANDOM FOREST==============
 #==================================================
-library(readxl)
-library(rpart.plot)
-library(rpart)
 library(caret)
-library(hydroGOF)
-library(readxl)
-library(biotools)
-library(magrittr)
-library(plyr)
-library(dplyr)
+library(quantregForest)
+library(randomForest)
+library(doParallel)
+library(ranger)
 
-dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_2020.xlsx",
-                  sheet = "PTF_V0") %>% data.frame
-
-names(dat)
-#View(dat)
-dat <- dat[,-c(1:10,13,15:17,22:26)]
-names(dat)
-summary(dat)
-
-dat1 <- dat[complete.cases(dat),]
-dim(dat1)
-
-names(dat1)
-str(dat1)
-
-dim(dat1)
-#1514  7
 
 set.seed(720)
 inTrain <- createDataPartition(y = dat1$elco, p = .70, list = FALSE)
 data.training <- dat1[ inTrain,] 
 
 dim(data.training)
-#1060   7
+
 
 data.validation <- dat1[-inTrain,]
 dim(data.validation)
-#452   7
 
-library(raster)
-library(caret)
-library(quantregForest)
-require(randomForest)
-library(doParallel)
-library(randomForest)
-library(quantregForest)
-library(quantreg)
 names(dat1)
 
-cl <- makeCluster(detectCores(), type='PSOCK')
-registerDoParallel(cl)
-control2 <- rfeControl(functions=rfFuncs, method="repeatedcv", number=5, repeats=5)
-(rfmodel <- rfe(x=dat1[,-c(3,7)], y=dat1[,3], sizes=c(1:6), rfeControl=control2))
-x11()
-plot(rfmodel, type=c("g", "o"))
-predictors(rfmodel)[1:5]
-stopCluster(cl = cl)
-endCluster()
-names(dat1)
-hist(dat1)
-plot(dat1$Na,dat1$elco)
-
-
-model_rf <- caret::train(y=data.training[,3],
-                         x=data.training[,predictors(rfmodel)[1:5]],
+model_rf <- caret::train(y=data.training[,2],
+                         x=data.training[,-2],
                          metric="RMSE",
                          data=data,
                          trControl = trainControl(method = "cv",savePredictions = T),
-                         method = "qrf"
+                         method = "rf"
 )
 x11()
 varImpPlot(model_rf[11][[1]])
@@ -236,7 +194,7 @@ plot(model_rf[11][[1]])
 
 str(model_rf)
 
-pred <- predict(model_rf, data.validation, quantiles=c(0.5,0.75),)
+pred <- predict(model_rf, data.validation)
 (cor(pred,data.validation$elco))^2
 
 
@@ -247,13 +205,125 @@ str(model_rf)
 model_rf$bestTune
 
 
-saveRDS(rf, "Model_elco_04052020.rds")
-##super_model <- readRDS("finalmodel.rds")
+modelo_ranger <- ranger(
+  formula=elco~.,
+  data=data.training,
+  num.trees = 500,
+  mtry = 2,
+  quantreg = F,
+  # Se emplean todos los cores disponibles -1
+  num.threads = future::availableCores() - 1,
+  seed = 123
+)
+pred <- predict(modelo_ranger, data.validation)
+
+(cor(pred$predictions,data.validation$elco))^2
+rmse(pred$predictions,data.validation$elco)
+
+#===============================================================
+#====MACHINE LEARNING - SUPPORT VECTOR MACHINES=================
+#===============================================================
+library(e1071)
+library(caret)
+library(kernlab)
+
+rctrl2 <- trainControl(method = "LOOCV")
+
+model_svm.lin <- caret::train(y=data.training[,2],
+                         x=data.training[,-2],
+                         data=data,
+                         trControl = trainControl(method = "LOOCV",savePredictions = T),
+                         method = "svmLinear",
+                         preProc = c("center", "scale")
+)
+
+
+model_svm.lin
+
+model_svm.lin$pred
+pred <- predict(model_svm.lin,data.validation[,-2])
+(cor(pred,data.validation$elco))^2
+rmse(pred,data.validation$elco)
+
+#===============================================================
+#====MACHINE LEARNING - SUPER LEARNER-MODELS ENSEMBLE===========
+#===============================================================
+#install.packages("SuperLearner",dep=T)
+library(SuperLearner)
+library(ranger)
+library(kernlab)
+
+listWrappers()
+
+names(data.training)
+
+SL.ranger.mod <- function(...){
+  SL.ranger(..., num.trees=500, mtry=2,quantreg=T)
+}
+
+SL.ksvm.mod <- function(...){
+  SL.ksvm(..., C=1, kernel="vanilladot", scaled=T)
+}
+
+ens.model.mod <- SuperLearner(Y=data.training[,2],
+                             X=data.training[,-2],
+                             family=gaussian(),
+                             SL.library=list("SL.ranger.mod","SL.ksvm.mod"))
+ens.model.mod
+pred.mod = predict(ens.model.mod, data.validation[,-2], onlySL = TRUE)
+(cor(pred.mod$pred,data.validation$elco))^2
+rmse(pred.mod$pred,data.frame(data.validation$elco))
 
 
 
-qrf <- quantregForest(x=data.training[,predictors(rfmodel)[1:5]], y=data.training[,3],
-                      nodesize=10,sampsize=30)
-(conditionalQuantiles <- predict(qrf, data.validation))
-dim(data.validation)
 
+
+ens.model <- SuperLearner(Y=data.training[,2],
+                          X=data.training[,-2],
+                          family=gaussian(),
+                          SL.library=list("SL.ranger","SL.ksvm"))
+
+
+ens.model
+pred = predict(ens.model, data.validation[,-2], onlySL = TRUE)
+(cor(pred$pred,data.validation$elco))^2
+rmse(pred$pred,data.frame(data.validation$elco))
+
+
+
+
+cv_sl.mod <- CV.SuperLearner(Y = data.training[,2],
+                        X = data.training[,-2],
+                        family = gaussian(),
+                        V = 5,
+                        SL.library = c("SL.ranger.mod","SL.ksvm.mod"))
+
+summary(cv_sl.mod)
+
+cv_sl <- CV.SuperLearner(Y = data.training[,2],
+                        X = data.training[,-2],
+                        family = gaussian(),
+                        V = 5,
+                        SL.library = c("SL.ranger","SL.ksvm"))
+
+summary(cv_sl)
+
+
+#============================================================
+#====EXTERNAL VALIDATION AGROSAVIA TOPSOIL SAMPLES===========
+#============================================================
+dat_val <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_2020.xlsx",
+                  sheet = "PTF_V0") %>% data.frame
+dim(dat_val)
+names(dat_val)
+dat_val <- dat_val[,c(12,14,15,18:21)]
+names(dat_val)
+dat_val <- na.omit(dat_val)
+
+pred_total <- predict(ens.model,dat_val[,-2],onlySL=T)
+dat_val <- data.frame(dat_val,pred=pred_total$pred)
+View(dat_val)
+
+(cor(dat_val$elco,dat_val$pred))^2
+rmse(dat_val$elco,dat_val$pred)
+plot(dat_val$pred,dat_val$elco)
