@@ -1,0 +1,380 @@
+---
+title: "Funciones de pedotransferencia CE_datos agrosavia"
+author: "Joan Gutiérrez"
+date: "5/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# **REPORTE DE AJUSTE DE FUNCIONES PARA ESTIMAR DATOS FALTANTES DE CONDUCTIVIDAD ELÉCTRICA**
+## **Proyecto:** Mapa de salinidad
+## **Fecha:** 21 de mayo de 2020
+
+Este documento resume el proceso de ajuste de funciones de pedotransferencia para estimación de datos faltantes de conductividad eléctrica. Es una primer versión.
+Para este ejercicio se emplearon datos de AGROSAVIA (top soil samples).
+
+
+## Directorio de trabajo y librerías requeridas
+
+```{r echo=F}
+setwd("~/PTF_EC")
+library(caret)
+library(readxl)
+library(quantregForest)
+library(randomForest)
+library(doParallel)
+library(nnet)
+library(ranger)
+#install.packages("openair",dep=T)
+#install.packages("dplyr",dep=T)
+library(openair)
+library(dplyr)
+library(moments)
+library(corrplot)
+library(SuperLearner)
+library(MASS)
+library(car)
+library(reshape)
+library(rpart)
+library(rpart.plot)
+library(mlr)
+library(matrixStats)
+library(mlbench)
+```
+
+```{r warning=F}
+dat <- read_excel("G:\\My Drive\\IGAC_2020\\SALINIDAD\\INSUMOS\\BASES\\BASE_NAL_2020.xlsx",
+                  sheet = "PTF_V0") %>% data.frame
+names(dat)
+dat1 <- dat[,c(6:8,11,12,14,15,18:21)]
+summary(dat1)
+```
+
+### Primera selección de variables de acuerdoa NA´s (opcional dependiendo base de datos)
+```{r}
+dim(dat1)
+names(dat1)
+dat1 <- dat1[,-c(7,9)]
+dat1 <- dat1[complete.cases(dat1),]
+dim(dat1)
+```
+
+### Análisis de correlación
+```{r}
+names(dat1)
+COR <- cor(as.matrix(dat1[,6]), as.matrix(dat1[,-6]),use = "complete.obs")
+COR
+x <- subset(melt(COR), value != 1 | value != NA)
+x <- x[with(x, order(-abs(x$value))),]
+x[1:8,]
+idx <- as.character(x$X2[1:8])
+```
+
+```{r, corplot}
+corrplot(cor(dat1), method="number")
+```
+### Distribución de la variable CE
+```{r, hist}
+hist(dat1$elco,las=1,col="gray",main="Conductividad eléctrica",ylim=c(0,200),breaks=60,
+     xlab=expression("CE" ~ (dS~m^{-1})))
+grid()
+rug(dat1$elco)
+```
+
+```{r echo=F}
+descr1 <- function(columna){
+  MAX <- max(columna,na.rm=T)
+  MIN <- min(columna,na.rm=T)
+  PROM <- mean(columna,na.rm=T)
+  MED <- median(columna,na.rm=T)
+  VAR <- var(columna,na.rm=T)
+  DESVEST <- sd(columna,na.rm=T)
+  CV <- DESVEST/PROM*100
+  CURT <- kurtosis(columna,na.rm=T)
+  SKEW <- skewness(columna,na.rm=T)
+  return(data.frame(MAX, MIN, PROM,MED,VAR,DESVEST,CV, CURT, SKEW))
+}
+options(digits = 2)
+fin  <- c()
+for(i in 1:ncol(dat1)){
+  temp <- descr1(dat1[,i])
+  fin <- rbind(fin,temp)
+}
+rownames(fin) <- names(dat1)
+fin
+```
+
+
+### Partición de datos en conjunto de entrenamiento y validación
+```{r}
+set.seed(720)
+inTrain <- createDataPartition(y = dat1$elco, p = .70, list = FALSE)
+data.training <- dat1[ inTrain,] 
+dim(data.training)
+data.validation <- dat1[-inTrain,]
+dim(data.validation)
+```
+
+
+### Regresión lineal
+```{r}
+idx
+fm <- as.formula(paste0("elco~",paste0(as.character(idx),collapse = "+")))
+fm
+modlm <- lm(log(elco)~.,data=data.training)
+#modlm <- lm(fm,data=data.training)
+summary(modlm)
+mod2 <- stepAIC(modlm)
+summary(mod2)
+vif(mod2)
+sqrt(vif(mod2))
+mod2 <- update(mod2, .~ . - silt-sand-K)
+summary(mod2)
+
+pred <- predict(mod2, data.validation)
+(AVE <- 1 - sum((exp(pred)-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE))
+
+hydroGOF::rmse(pred,data.validation$elco)
+cor(pred,data.validation$elco)
+```
+
+
+## Recursive Feature Elimination
+```{r}
+names(dat1)
+cl <- makeCluster(detectCores(), type='PSOCK')
+registerDoParallel(cl)
+control2 <- rfeControl(functions=rfFuncs, method="repeatedcv", number=5, repeats=5)
+(rfmodel <- rfe(x=dat1[,-6], y=dat1[,6], sizes=c(1:6), rfeControl=control2))
+plot(rfmodel, type=c("g", "o"))
+rfmodel
+predictors(rfmodel)[c(1:4)]
+#stopCluster(cl = cl)
+# #1256 con limo
+```
+
+## Arboles de regresion
+
+```{r warning=F}
+rtmodel <- train(elco~phaq1+Ca+sand+clay,
+                              data=data.training,
+                              trControl = trainControl(method = "cv"),
+                              method = "rpart",
+                              preProc = c("center", "scale")
+)
+
+
+rtmodel$bestTune
+M1 <- rpart(elco~phaq1+Ca+sand+clay, 
+            data = data.training) 
+#,control = rpart.control(cp = rtmodel$bestTune))
+M1$variable.importance
+M1
+x11()
+rpart.plot(M1,type=5,main="CE",fallen.leaves = T,extra = 100,digits = 3,cex=0.75,shadow.col = "gray")##Definitivo para pintar el podado
+pred <- predict(M1, data.validation, type = "vector")
+
+(AVE <- 1 - sum((exp(pred)-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE))
+
+hydroGOF::rmse(pred,data.validation$elco)
+cor(pred,data.validation$elco)
+```
+
+
+## Random forest
+```{r}
+fm <- as.formula(paste0("elco~",paste0(predictors(rfmodel)[c(1:4)],collapse = "+")))
+fm
+modelo_ranger <- ranger(
+  formula=fm,
+  data=data.training,
+  num.trees = 500,
+  mtry = 2,
+  importance = "impurity"
+)
+```
+
+```{r, VarImpPlot}
+vimp <- data.frame(variables=predictors(modelo_ranger), 
+                   importance=as.vector(modelo_ranger$variable.importance))
+ggplot(vimp, aes(x=reorder(variables,importance), y=importance,fill=importance))+ 
+  geom_bar(stat="identity", position="dodge")+ coord_flip()+
+  ylab("Variable Importance")+
+  xlab("Variables")+
+  ggtitle("Variable importance plot")
+```
+
+# Medidas de ajuste del modelo
+```{r}
+pred <- predict(modelo_ranger, data.validation)
+(AVE <- 1 - sum((pred$predictions-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE))
+hydroGOF::rmse(pred$predictions,data.validation$elco)
+cor(pred$predictions,data.validation$elco)
+```
+
+## SVM
+names(data.training)
+```{r}
+
+model_svm.lin <- caret::train(y=data.training[,6],
+                              x=data.training[,predictors(rfmodel)[c(1:4)]],
+                              data=data,
+                              trControl = trainControl(method = "LOOCV",savePredictions = T),
+                              method = "svmLinear",
+                              preProc = c("center", "scale")
+)
+```
+
+
+# Medidas de ajuste del modelo
+```{r}
+pred <- predict(model_svm.lin, data.validation[,predictors(rfmodel)[c(1:4)]])
+cor(pred,data.validation$elco)
+(AVE <- 1 - sum((pred-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE)
+)
+hydroGOF::rmse(pred,data.validation$elco)
+```
+
+
+## NNET
+```{r}
+
+model_nnet <- nnet(y=data.training[,6],
+                              x=data.training[,predictors(rfmodel)[c(1:4)]],
+                              data=data.training,size=16)
+
+```
+
+
+# Medidas de ajuste del modelo nnet
+```{r}
+pred <- predict(model_nnet, data.validation[,predictors(rfmodel)[c(1:4)]])
+cor(pred,data.validation$elco)
+(AVE <- 1 - sum((pred-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE)
+)
+hydroGOF::rmse(data.frame(pred),data.validation$elco)
+```
+
+# Ensamble por defecto
+```{r}
+ens.model <- SuperLearner(Y=data.training[,3],
+                          X=data.training[,predictors(rfmodel)[c(1:4)]],
+                          family=gaussian(),
+                          SL.library=list("SL.ranger","SL.ksvm","SL.nnet"))
+
+ens.model
+
+
+cv_sl <- CV.SuperLearner(Y = data.training[,3],
+                         X = data.training[,predictors(rfmodel)[c(1:5)]],
+                         family = gaussian(),
+                         V = 5,
+                         SL.library = c("SL.ranger","SL.ksvm","SL.nnet"))
+summary(cv_sl)
+```
+
+
+# Ajuste del modelo ensamblado
+
+```{r}
+pred = predict(ens.model, data.validation[,predictors(rfmodel)[c(1:4)]], onlySL = TRUE)
+cor(pred$pred,data.validation$elco)
+(AVE <- 1 - sum((pred$pred-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE)
+)
+hydroGOF::rmse(pred$pred,data.frame(data.validation$elco))
+```
+
+# Modelos (**"tuned"**)
+```{r}
+SL.ranger.mod <- function(...){
+  SL.ranger(..., num.trees=500, mtry=2,quantreg=T)
+}
+
+SL.ksvm.mod <- function(...){
+  SL.ksvm(..., C=1, kernel="vanilladot", scaled=T)
+}
+
+SL.nnet.mod <- function(...){
+  SL.nnet(...,size=12,maxit=7100,decay=0.0005)
+}
+
+
+ens.model.mod <- SuperLearner(Y=data.training[,3],
+                              X=data.training[,predictors(rfmodel)[c(1:4)]],
+                              family=gaussian(),
+                              SL.library=list("SL.ranger.mod","SL.ksvm.mod","SL.nnet.mod"))
+ens.model.mod
+
+cv_sl.mod <- CV.SuperLearner(Y = data.training[,3],
+                             X = data.training[,predictors(rfmodel)[c(1:4)]],
+                             family = gaussian(),
+                             V = 5,
+                             SL.library = c("SL.ranger.mod","SL.nnet.mod"))
+
+summary(cv_sl.mod)
+```
+
+
+
+# Ajuste de modelos (**"tuned"**)
+```{r}
+pred.mod = predict(ens.model.mod, data.validation[,predictors(rfmodel)[c(1:4)]], onlySL = TRUE)
+cor(pred.mod$pred,data.validation$elco)
+(AVE <- 1 - sum((pred.mod$pred-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE)
+)
+hydroGOF::rmse(pred.mod$pred,data.frame(data.validation$elco))
+```
+
+
+## Otra opción de ensamble
+```{r}
+data("BostonHousing",package="mlbench")
+tsk = makeRegrTask(data = data.training, target = "elco")
+data.training$elco <- as.numeric(data.training$elco)
+base <- c("regr.rpart","regr.svm","regr.ranger")
+lrns <- lapply(base,makeLearner)
+m <- makeStackedLearner(base.learners = lrns, predict.type="response",
+                        method="stack.cv", super.learner = "regr.lm")
+tmp <- train(m,tsk)
+summary(tmp$learner.model$super.model$learner.model)
+str(tmp$learner.model)
+
+
+pred <- predict(tmp,newdata = data.validation)
+#pred$data$response
+#pred$data$truth
+
+cor(pred$data$response,pred$data$truth)
+(AVE <- 1 - sum((pred$data$response-data.validation$elco)^2, na.rm=TRUE)/
+    sum((data.validation$elco - mean(data.validation$elco, na.rm = TRUE))^2,
+        na.rm = TRUE)
+)
+hydroGOF::rmse(pred$data$response,data.validation$elco)
+```
+
+
+
+
